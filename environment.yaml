@@ -1,0 +1,9 @@
+name: fortune-dialogue
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip:
+      - streamlit==1.39.0
+      - openai==1.51.2
