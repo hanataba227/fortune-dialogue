@@ -5,8 +5,18 @@ AI 손님과 대화를 나누며 사주를 풀어가는 감성 대화형 웹 프
 
 import streamlit as st
 import os
+import sys
 from dotenv import load_dotenv
 from datetime import datetime
+
+# Add utils directory to path
+sys.path.append(os.path.join(os.path.dirname(__file__), 'utils'))
+
+from utils.openai_helper import generate_character_profile, chat_with_character
+from utils.supabase_helper import (
+    create_character, create_session, save_message, 
+    end_session, get_conversation_history
+)
 
 # Load environment variables
 load_dotenv()
@@ -71,6 +81,8 @@ if 'messages' not in st.session_state:
     st.session_state.messages = []
 if 'character' not in st.session_state:
     st.session_state.character = None
+if 'character_id' not in st.session_state:
+    st.session_state.character_id = None
 if 'session_id' not in st.session_state:
     st.session_state.session_id = None
 
@@ -85,6 +97,7 @@ with st.sidebar:
     if st.button("🆕 새로운 상담 시작"):
         st.session_state.messages = []
         st.session_state.character = None
+        st.session_state.character_id = None
         st.session_state.session_id = None
         st.rerun()
     
@@ -108,19 +121,34 @@ if st.session_state.character is None:
     with col2:
         if st.button("손님 맞이하기", type="primary", use_container_width=True):
             with st.spinner("손님이 들어오고 있습니다..."):
-                # TODO: Generate character using OpenAI
-                st.session_state.character = {
-                    "name": "임수진",
-                    "age": 35,
-                    "gender": "여성",
-                    "occupation": "프리랜서 일러스트레이터",
-                    "personality": "섬세하고 내성적이며 창의적인 성격",
-                    "concern": "최근 중요한 클라이언트를 잃고 재정적인 어려움과 진로에 대한 고민을 하고 있음",
-                    "birth_date": "1985-07-14",
-                    "birth_time": "08:30",
-                    "speaking_style": "부드럽고 정중한 말투, 예술적 표현을 자주 사용함"
-                }
-                st.rerun()
+                # Generate character using OpenAI
+                character_data = generate_character_profile()
+                
+                if character_data:
+                    # Save character to database
+                    character_id = create_character(character_data)
+                    
+                    if character_id:
+                        # Create session
+                        session_id = create_session(character_id)
+                        
+                        if session_id:
+                            st.session_state.character = character_data
+                            st.session_state.character_id = character_id
+                            st.session_state.session_id = session_id
+                            
+                            # Add initial greeting message
+                            greeting = f"안녕하세요... 저는 {character_data['name']}이라고 합니다. 사주를 보러 왔어요."
+                            st.session_state.messages.append({"role": "assistant", "content": greeting})
+                            save_message(session_id, character_id, "ai", greeting)
+                            
+                            st.rerun()
+                        else:
+                            st.error("세션 생성에 실패했습니다.")
+                    else:
+                        st.error("인물 저장에 실패했습니다.")
+                else:
+                    st.error("인물 생성에 실패했습니다. 다시 시도해주세요.")
 else:
     # Character profile display
     with st.container():
@@ -159,12 +187,39 @@ else:
     if user_input:
         # Add user message
         st.session_state.messages.append({"role": "user", "content": user_input})
+        save_message(st.session_state.session_id, st.session_state.character_id, "user", user_input)
         
-        # TODO: Generate AI response using OpenAI
-        # For now, use a placeholder response
-        ai_response = f"({st.session_state.character['name']}) 네, 말씀해 주세요... (AI 응답 기능 개발 예정)"
+        # Generate AI response using OpenAI
+        with st.spinner(f"{st.session_state.character['name']}님이 생각하고 있습니다..."):
+            # Prepare character context
+            character_context = f"""
+이름: {st.session_state.character['name']}
+나이: {st.session_state.character['age']}세
+성별: {st.session_state.character['gender']}
+직업: {st.session_state.character['occupation']}
+성격: {st.session_state.character['personality']}
+현재 고민: {st.session_state.character['concern']}
+말투: {st.session_state.character['speaking_style']}
+
+당신은 사주를 보러 온 손님입니다. 자연스럽고 진솔하게 대화하세요.
+너무 많이 말하지 말고, 간결하게 답변하세요.
+"""
+            
+            # Prepare conversation history for API
+            conversation_history = []
+            for msg in st.session_state.messages[:-1]:  # Exclude the current user message
+                role = "assistant" if msg["role"] == "assistant" else "user"
+                conversation_history.append({"role": role, "content": msg["content"]})
+            
+            # Get AI response
+            ai_response = chat_with_character(character_context, user_input, conversation_history)
+            
+            if ai_response:
+                st.session_state.messages.append({"role": "assistant", "content": ai_response})
+                save_message(st.session_state.session_id, st.session_state.character_id, "ai", ai_response)
+            else:
+                st.error("응답 생성에 실패했습니다. 다시 시도해주세요.")
         
-        st.session_state.messages.append({"role": "assistant", "content": ai_response})
         st.rerun()
     
     # End consultation button
@@ -172,7 +227,14 @@ else:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         if st.button("🔮 상담 종료 및 사주 결과 보기", use_container_width=True):
-            st.info("사주 해석 기능은 개발 예정입니다.")
+            if len(st.session_state.messages) > 2:  # At least some conversation happened
+                with st.spinner("대화 내용을 분석하고 있습니다..."):
+                    # End session
+                    end_session(st.session_state.session_id)
+                    st.success("상담이 종료되었습니다.")
+                    st.info("사주 해석 기능은 Phase 3에서 개발 예정입니다.")
+            else:
+                st.warning("대화를 더 나눈 후에 상담을 종료해주세요.")
 
 # Footer
 st.markdown("---")

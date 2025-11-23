@@ -3,6 +3,7 @@ OpenAI API 연동 모듈
 """
 
 import os
+import json
 from openai import OpenAI
 from dotenv import load_dotenv
 
@@ -40,39 +41,43 @@ def test_openai_connection():
         return False
 
 def generate_character_profile():
-    """가상 인물 프로필을 생성합니다."""
+    """가상 인물 프로필을 생성합니다. 딕셔너리 형태로 반환합니다."""
     try:
-        print("\n🎭 인물 프로필 생성 중...")
-        
         prompt = """당신은 사주 상담소를 방문한 가상의 인물을 생성하는 전문가입니다.
 다음 요소를 포함한 인물을 생성해주세요:
-- 이름 (한국 이름)
-- 나이 (20-60세)
-- 성별
-- 직업
-- 성격 (3-4가지 특징)
-- 현재 고민이나 상황
-- 생년월일시 (음력 가능, 형식: YYYY-MM-DD HH:MM)
-- 말투 특징
+- name: 이름 (한국 이름)
+- age: 나이 (20-60세 사이의 숫자)
+- gender: 성별 ("남성" 또는 "여성")
+- occupation: 직업
+- personality: 성격 (한 문장으로)
+- concern: 현재 고민이나 상황 (구체적으로)
+- birth_date: 생년월일 (YYYY-MM-DD 형식)
+- birth_time: 출생 시간 (HH:MM 형식)
+- speaking_style: 말투 특징
 
-자연스럽고 공감 가능한 인물을 만들어주세요.
-JSON 형식으로 응답해주세요."""
+반드시 유효한 JSON 형식으로만 응답하세요. 추가 설명 없이 JSON만 반환하세요."""
 
         response = client.chat.completions.create(
             model=GPT_MODEL,
             messages=[
-                {"role": "system", "content": "You are a creative character designer for fortune-telling consultations."},
+                {"role": "system", "content": "You are a creative character designer. Always respond with valid JSON only."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.8,
-            max_tokens=500
+            max_tokens=500,
+            response_format={"type": "json_object"}
         )
         
-        result = response.choices[0].message.content
-        print(f"✅ 인물 프로필 생성 완료!")
-        print(f"\n{result}")
-        return result
+        result_text = response.choices[0].message.content
         
+        # JSON 파싱
+        character_data = json.loads(result_text)
+        
+        return character_data
+        
+    except json.JSONDecodeError as e:
+        print(f"❌ JSON 파싱 실패: {str(e)}")
+        return None
     except Exception as e:
         print(f"❌ 인물 프로필 생성 실패: {str(e)}")
         return None
