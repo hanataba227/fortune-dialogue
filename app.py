@@ -12,10 +12,10 @@ from datetime import datetime
 # Add utils directory to path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'utils'))
 
-from utils.openai_helper import generate_character_profile, chat_with_character
+from utils.openai_helper import generate_character_profile, chat_with_character, analyze_fortune
 from utils.supabase_helper import (
     create_character, create_session, save_message, 
-    end_session, get_conversation_history
+    end_session, get_conversation_history, save_fortune_result
 )
 
 # Load environment variables
@@ -73,6 +73,69 @@ st.markdown("""
         height: 3rem;
         font-size: 1.1em;
     }
+    
+    /* 사주 결과 전용 스타일 */
+    .fortune-title {
+        text-align: center;
+        color: #8B4513;
+        font-size: 2.5em;
+        font-weight: bold;
+        margin: 2rem 0 1.5rem 0;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    .fortune-card {
+        background: linear-gradient(135deg, #FFF8F0 0%, #FFFAF5 100%);
+        padding: 2rem;
+        border-radius: 1.5rem;
+        border: 3px solid #D4A574;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 8px 16px rgba(139, 69, 19, 0.15);
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+    
+    .fortune-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 12px 24px rgba(139, 69, 19, 0.25);
+    }
+    
+    .summary-card {
+        background: linear-gradient(135deg, #FFE5D0 0%, #FFF0E5 100%);
+        padding: 2.5rem;
+        border-radius: 2rem;
+        border: 4px solid #C8956E;
+        margin-bottom: 2rem;
+        box-shadow: 0 10px 20px rgba(139, 69, 19, 0.2);
+        text-align: center;
+    }
+    
+    .fortune-section-title {
+        color: #8B4513;
+        font-size: 1.4em;
+        font-weight: bold;
+        margin-bottom: 1rem;
+        padding-bottom: 0.5rem;
+        border-bottom: 2px solid #D4A574;
+    }
+    
+    .fortune-content {
+        color: #4A4A4A;
+        font-size: 1.05em;
+        line-height: 1.8;
+        text-align: justify;
+    }
+    
+    .summary-text {
+        color: #8B4513;
+        font-size: 1.3em;
+        font-weight: 600;
+        line-height: 1.6;
+    }
+    
+    .fortune-icon {
+        font-size: 2em;
+        margin-bottom: 0.5rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -85,6 +148,10 @@ if 'character_id' not in st.session_state:
     st.session_state.character_id = None
 if 'session_id' not in st.session_state:
     st.session_state.session_id = None
+if 'fortune_result' not in st.session_state:
+    st.session_state.fortune_result = None
+if 'consultation_ended' not in st.session_state:
+    st.session_state.consultation_ended = False
 
 # Header
 st.markdown('<div class="main-header">사담(四談)</div>', unsafe_allow_html=True)
@@ -99,6 +166,8 @@ with st.sidebar:
         st.session_state.character = None
         st.session_state.character_id = None
         st.session_state.session_id = None
+        st.session_state.fortune_result = None
+        st.session_state.consultation_ended = False
         st.rerun()
     
     st.divider()
@@ -222,19 +291,116 @@ else:
         
         st.rerun()
     
-    # End consultation button
-    st.divider()
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        if st.button("🔮 상담 종료 및 사주 결과 보기", use_container_width=True):
-            if len(st.session_state.messages) > 2:  # At least some conversation happened
-                with st.spinner("대화 내용을 분석하고 있습니다..."):
-                    # End session
-                    end_session(st.session_state.session_id)
-                    st.success("상담이 종료되었습니다.")
-                    st.info("사주 해석 기능은 Phase 3에서 개발 예정입니다.")
-            else:
-                st.warning("대화를 더 나눈 후에 상담을 종료해주세요.")
+    # End consultation button (only show if consultation not ended)
+    if not st.session_state.consultation_ended:
+        st.divider()
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            if st.button("🔮 상담 종료 및 사주 결과 보기", use_container_width=True):
+                if len(st.session_state.messages) > 2:  # At least some conversation happened
+                    # First, mark the session as ended in the database so status reflects user's action
+                    with st.spinner("상담을 종료 처리하고 있습니다..."):
+                        ended = end_session(st.session_state.session_id)
+
+                    if not ended:
+                        st.warning("세션 상태를 데이터베이스에 업데이트하지 못했습니다. 계속해서 결과 생성을 시도합니다.")
+
+                    # Show a new spinner while analyzing and saving the result
+                    with st.spinner("대화 내용을 분석하고 사주를 해석하고 있습니다..."):
+                        # Get conversation history from database
+                        db_messages = get_conversation_history(st.session_state.session_id)
+
+                        # Convert to format needed for analysis
+                        conversation_for_analysis = [
+                            {"speaker": msg["speaker"], "message": msg["message"]}
+                            for msg in db_messages
+                        ]
+
+                        # Analyze fortune
+                        fortune_result = analyze_fortune(
+                            st.session_state.character,
+                            conversation_for_analysis
+                        )
+
+                        if fortune_result:
+                            # Try to save fortune result to database
+                            save_success = save_fortune_result(
+                                st.session_state.session_id,
+                                st.session_state.character_id,
+                                fortune_result
+                            )
+
+                            # Update session state regardless of save success (session already ended)
+                            st.session_state.fortune_result = fortune_result
+                            st.session_state.consultation_ended = True
+
+                            if save_success:
+                                st.success("✨ 사주 해석이 완료되었습니다! 결과가 저장되었습니다.")
+                            else:
+                                st.error("사주 해석은 완료되었지만, 결과 저장에 실패했습니다. 로그를 확인해주세요.")
+
+                            # Rerun to show results (or partial state)
+                            st.rerun()
+                        else:
+                            # Analysis failed, but session is ended
+                            st.session_state.consultation_ended = True
+                            st.error("사주 해석에 실패했습니다. 세션은 종료되었습니다.")
+                            st.rerun()
+                else:
+                    st.warning("대화를 더 나눈 후에 상담을 종료해주세요.")
+    
+    # Display fortune result if consultation ended
+    if st.session_state.consultation_ended and st.session_state.fortune_result:
+        st.divider()
+        
+        # Fortune result title with traditional style
+        st.markdown('<div class="fortune-title">🔮 사주 해석 결과 🔮</div>', unsafe_allow_html=True)
+        
+        result = st.session_state.fortune_result
+        
+        # Summary card - prominent display
+        st.markdown('''
+        <div class="summary-card">
+            <div class="fortune-icon">📜</div>
+            <div style="font-size: 1.5em; color: #8B4513; font-weight: bold; margin-bottom: 1rem;">운세 요약</div>
+            <div class="summary-text">{}</div>
+        </div>
+        '''.format(result.get('summary', '운세 요약 없음')), unsafe_allow_html=True)
+        
+        st.markdown("<div style='height: 1rem;'></div>", unsafe_allow_html=True)
+        
+        # Detailed analysis in three columns for better readability
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.markdown('''
+            <div class="fortune-card" style="background: linear-gradient(135deg, #FFF9E6 0%, #FFFEF5 100%); border-color: #E6C68C;">
+                <div class="fortune-icon">🌟</div>
+                <div class="fortune-section-title">전체 운세</div>
+                <div class="fortune-content">{}</div>
+            </div>
+            '''.format(result.get('fortune_analysis', '운세 분석 없음')), unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown('''
+            <div class="fortune-card" style="background: linear-gradient(135deg, #F0F8FF 0%, #F8FCFF 100%); border-color: #9BC4E2;">
+                <div class="fortune-icon">💎</div>
+                <div class="fortune-section-title">성격 및 성향</div>
+                <div class="fortune-content">{}</div>
+            </div>
+            '''.format(result.get('personality_analysis', '성격 분석 없음')), unsafe_allow_html=True)
+        
+        with col3:
+            st.markdown('''
+            <div class="fortune-card" style="background: linear-gradient(135deg, #FFF5F0 0%, #FFFAF8 100%); border-color: #E6B09B;">
+                <div class="fortune-icon">💡</div>
+                <div class="fortune-section-title">조언</div>
+                <div class="fortune-content">{}</div>
+            </div>
+            '''.format(result.get('advice', '조언 없음')), unsafe_allow_html=True)
+        
+        # Additional decorative element
+        st.markdown("<div style='text-align: center; margin-top: 2rem; color: #A0826D; font-size: 1.1em;'>🪶 상담이 완료되었습니다 🪶</div>", unsafe_allow_html=True)
 
 # Footer
 st.markdown("---")

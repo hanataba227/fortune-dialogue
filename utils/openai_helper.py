@@ -111,6 +111,74 @@ def chat_with_character(character_context: str, user_message: str, conversation_
         print(f"❌ 대화 생성 실패: {str(e)}")
         return None
 
+def analyze_fortune(character_data: dict, conversation_history: list):
+    """
+    대화 내용을 분석하여 사주를 해석합니다.
+    
+    Args:
+        character_data: 인물 프로필 딕셔너리
+        conversation_history: 대화 기록 리스트 (각 항목은 {"speaker": "user"/"ai", "message": "..."} 형식)
+    
+    Returns:
+        사주 해석 결과 딕셔너리 (fortune_analysis, personality_analysis, advice, summary)
+    """
+    try:
+        # 대화 내용을 문자열로 변환
+        conversation_text = "\n".join([
+            f"{'손님' if msg['speaker'] == 'user' else character_data['name']}: {msg['message']}"
+            for msg in conversation_history
+        ])
+        
+        prompt = f"""당신은 전문 사주 해석가입니다.
+다음은 사주를 보러 온 손님과 나눈 대화입니다:
+
+<인물 정보>
+이름: {character_data['name']}
+나이: {character_data['age']}세
+성별: {character_data['gender']}
+직업: {character_data['occupation']}
+성격: {character_data['personality']}
+현재 고민: {character_data['concern']}
+생년월일: {character_data['birth_date']}
+출생 시간: {character_data['birth_time']}
+
+<대화 내용>
+{conversation_text}
+
+위 대화와 인물 정보를 바탕으로 사주를 해석해주세요.
+다음 내용을 포함하여 JSON 형식으로 응답하세요:
+- fortune_analysis: 전체적인 운세 (4-5문장)
+- personality_analysis: 성격 및 성향 분석 (3-4문장)
+- advice: 현재 고민에 대한 조언 (3-4문장)
+- summary: 한 줄 요약
+
+공감적이고 따뜻한 어조로, 구체적인 조언을 포함해주세요.
+전통적인 사주 해석 용어(오행, 천간지지 등)를 적절히 사용하되, 이해하기 쉽게 설명해주세요."""
+
+        response = client.chat.completions.create(
+            model=GPT_MODEL,
+            messages=[
+                {"role": "system", "content": "You are a professional fortune teller specializing in Korean Saju (Four Pillars of Destiny). Always respond with valid JSON only."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=1000,
+            response_format={"type": "json_object"}
+        )
+        
+        result_text = response.choices[0].message.content
+        result_data = json.loads(result_text)
+        
+        print(f"✅ 사주 해석 완료")
+        return result_data
+        
+    except json.JSONDecodeError as e:
+        print(f"❌ JSON 파싱 실패: {str(e)}")
+        return None
+    except Exception as e:
+        print(f"❌ 사주 해석 실패: {str(e)}")
+        return None
+
 if __name__ == "__main__":
     # Test OpenAI connection
     test_openai_connection()
