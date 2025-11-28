@@ -12,10 +12,15 @@ from datetime import datetime
 # Add utils directory to path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'utils'))
 
-from utils.openai_helper import generate_character_profile, chat_with_character, analyze_fortune
+from utils.openai_helper import (
+    generate_character_profile, chat_with_character, analyze_fortune,
+    generate_character_image, download_image
+)
 from utils.supabase_helper import (
     create_character, create_session, save_message, 
-    end_session, get_conversation_history, save_fortune_result
+    end_session, get_conversation_history, save_fortune_result,
+    get_all_sessions, get_session_detail, upload_image_to_storage,
+    update_character_image
 )
 
 # Load environment variables
@@ -152,6 +157,10 @@ if 'fortune_result' not in st.session_state:
     st.session_state.fortune_result = None
 if 'consultation_ended' not in st.session_state:
     st.session_state.consultation_ended = False
+if 'view_mode' not in st.session_state:
+    st.session_state.view_mode = 'new'  # 'new', 'history', 'detail'
+if 'selected_session_id' not in st.session_state:
+    st.session_state.selected_session_id = None
 
 # Header
 st.markdown('<div class="main-header">사담(四談)</div>', unsafe_allow_html=True)
@@ -173,7 +182,46 @@ with st.sidebar:
     st.divider()
     
     st.subheader("📜 과거 상담 기록")
-    st.info("기능 개발 예정")
+    
+    if st.button("📅 상담 기록 보기", use_container_width=True):
+        st.session_state.view_mode = 'history'
+        st.rerun()
+    
+    if st.session_state.view_mode == 'history':
+        # 과거 상담 목록 표시
+        sessions = get_all_sessions(limit=10)
+        
+        if sessions:
+            st.write(f"📊 총 {len(sessions)}건의 상담 기록")
+            
+            for session in sessions:
+                character = session.get('characters', {})
+                character_name = character.get('name', '알 수 없음')
+                started_at = session.get('started_at', '')
+                status = session.get('status', 'unknown')
+                
+                # 날짜 포맷팅
+                if started_at:
+                    try:
+                        dt = datetime.fromisoformat(started_at.replace('Z', '+00:00'))
+                        date_str = dt.strftime('%Y-%m-%d %H:%M')
+                    except:
+                        date_str = started_at[:16]
+                else:
+                    date_str = '날짜 없음'
+                
+                status_emoji = '✅' if status == 'completed' else '🔄'
+                
+                if st.button(
+                    f"{status_emoji} {character_name} ({date_str})",
+                    key=f"session_{session['id']}",
+                    use_container_width=True
+                ):
+                    st.session_state.selected_session_id = session['id']
+                    st.session_state.view_mode = 'detail'
+                    st.rerun()
+        else:
+            st.info("아직 상담 기록이 없습니다.")
     
     st.divider()
     
@@ -181,7 +229,95 @@ with st.sidebar:
     st.checkbox("배경 음악", value=False, disabled=True)
 
 # Main content area
-if st.session_state.character is None:
+if st.session_state.view_mode == 'detail' and st.session_state.selected_session_id:
+    # 과거 상담 상세 보기 모드
+    session_detail = get_session_detail(st.session_state.selected_session_id)
+    
+    if session_detail:
+        character = session_detail.get('characters', {})
+        conversations = session_detail.get('conversations', [])
+        fortune_result = session_detail.get('fortune_result')
+        
+        # 캐릭터 프로필 표시
+        with st.container():
+            st.markdown('<div class="character-card">', unsafe_allow_html=True)
+            col1, col2 = st.columns([1, 3])
+            
+            with col1:
+                image_url = character.get('image_url', 'https://via.placeholder.com/150')
+                st.image(image_url, caption="인물 이미지")
+            
+            with col2:
+                st.markdown(f"### {character.get('name', '알 수 없음')}")
+                st.write(f"**나이**: {character.get('age', '?')}세 | **성별**: {character.get('gender', '?')}")
+                st.write(f"**직업**: {character.get('occupation', '?')}")
+                st.write(f"**성격**: {character.get('personality', '?')}")
+            
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        st.divider()
+        
+        # 대화 내용 표시
+        st.markdown("### 💬 대화 기록")
+        
+        for conv in conversations:
+            speaker = conv.get('speaker')
+            message = conv.get('message')
+            
+            if speaker == 'user':
+                st.markdown(f'<div class="chat-message user-message"><strong>나</strong><br>{message}</div>', unsafe_allow_html=True)
+            else:
+                st.markdown(f'<div class="chat-message ai-message"><strong>{character.get("name", "AI")}</strong><br>{message}</div>', unsafe_allow_html=True)
+        
+        # 사주 결과 표시
+        if fortune_result:
+            st.divider()
+            st.markdown('<div class="fortune-title">🔮 사주 해석 결과 🔮</div>', unsafe_allow_html=True)
+            
+            # Summary card
+            st.markdown('''
+            <div class="summary-card">
+                <div class="fortune-icon">📜</div>
+                <div style="font-size: 1.5em; color: #8B4513; font-weight: bold; margin-bottom: 1rem;">운세 요약</div>
+                <div class="summary-text">{}</div>
+            </div>
+            '''.format(fortune_result.get('summary', '운세 요약 없음')), unsafe_allow_html=True)
+            
+            st.markdown("<div style='height: 1rem;'></div>", unsafe_allow_html=True)
+            
+            # Detailed analysis
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.markdown('''
+                <div class="fortune-card" style="background: linear-gradient(135deg, #FFF9E6 0%, #FFFEF5 100%); border-color: #E6C68C;">
+                    <div class="fortune-icon">🌟</div>
+                    <div class="fortune-section-title">전체 운세</div>
+                    <div class="fortune-content">{}</div>
+                </div>
+                '''.format(fortune_result.get('fortune_analysis', '운세 분석 없음')), unsafe_allow_html=True)
+            
+            with col2:
+                st.markdown('''
+                <div class="fortune-card" style="background: linear-gradient(135deg, #F0F8FF 0%, #F8FCFF 100%); border-color: #9BC4E2;">
+                    <div class="fortune-icon">💎</div>
+                    <div class="fortune-section-title">성격 및 성향</div>
+                    <div class="fortune-content">{}</div>
+                </div>
+                '''.format(fortune_result.get('personality_analysis', '성격 분석 없음')), unsafe_allow_html=True)
+            
+            with col3:
+                st.markdown('''
+                <div class="fortune-card" style="background: linear-gradient(135deg, #FFF5F0 0%, #FFFAF8 100%); border-color: #E6B09B;">
+                    <div class="fortune-icon">💡</div>
+                    <div class="fortune-section-title">조언</div>
+                    <div class="fortune-content">{}</div>
+                </div>
+                '''.format(fortune_result.get('advice', '조언 없음')), unsafe_allow_html=True)
+    else:
+        st.error("세션 정보를 불러올 수 없습니다.")
+    
+elif st.session_state.character is None and st.session_state.view_mode == 'new':
     # Character generation screen
     st.markdown("### 🪶 상담을 시작하시겠습니까?")
     st.write("새로운 손님이 사주를 보러 찾아왔습니다.")
@@ -198,6 +334,29 @@ if st.session_state.character is None:
                     character_id = create_character(character_data)
                     
                     if character_id:
+                        # Generate character image (optional - don't fail if it doesn't work)
+                        with st.spinner("인물 이미지를 생성하고 있습니다..."):
+                            try:
+                                image_url = generate_character_image(character_data)
+                                
+                                if image_url:
+                                    # Download image
+                                    image_data = download_image(image_url)
+                                    
+                                    if image_data:
+                                        # Upload to Supabase Storage
+                                        storage_url = upload_image_to_storage(image_data, character_id)
+                                        
+                                        if storage_url:
+                                            # Update character image URL in database
+                                            update_character_image(character_id, storage_url)
+                                            character_data['image_url'] = storage_url
+                                        else:
+                                            character_data['image_url'] = image_url  # Use temporary URL
+                            except Exception as e:
+                                print(f"⚠️ 이미지 생성 실패 (계속 진행): {str(e)}")
+                                character_data['image_url'] = None
+                        
                         # Create session
                         session_id = create_session(character_id)
                         
@@ -205,6 +364,7 @@ if st.session_state.character is None:
                             st.session_state.character = character_data
                             st.session_state.character_id = character_id
                             st.session_state.session_id = session_id
+                            st.session_state.view_mode = 'new'
                             
                             # Add initial greeting message
                             greeting = f"안녕하세요... 저는 {character_data['name']}이라고 합니다. 사주를 보러 왔어요."
@@ -218,14 +378,17 @@ if st.session_state.character is None:
                         st.error("인물 저장에 실패했습니다.")
                 else:
                     st.error("인물 생성에 실패했습니다. 다시 시도해주세요.")
-else:
+elif st.session_state.character is not None and st.session_state.view_mode == 'new':
     # Character profile display
     with st.container():
         st.markdown('<div class="character-card">', unsafe_allow_html=True)
         col1, col2 = st.columns([1, 3])
         
         with col1:
-            st.image("https://via.placeholder.com/150", caption="인물 이미지")
+            image_url = st.session_state.character.get('image_url', 'https://via.placeholder.com/150')
+            if not image_url:
+                image_url = 'https://via.placeholder.com/150'
+            st.image(image_url, caption="인물 이미지")
         
         with col2:
             st.markdown(f"### {st.session_state.character['name']}")

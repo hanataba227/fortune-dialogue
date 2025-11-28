@@ -4,6 +4,7 @@ OpenAI API 연동 모듈
 
 import os
 import json
+import requests
 from openai import OpenAI
 from dotenv import load_dotenv
 
@@ -109,6 +110,80 @@ def chat_with_character(character_context: str, user_message: str, conversation_
         
     except Exception as e:
         print(f"❌ 대화 생성 실패: {str(e)}")
+        return None
+
+def generate_character_image(character_data: dict) -> str:
+    """
+    DALL-E를 사용하여 인물 이미지를 생성합니다.
+    
+    Args:
+        character_data: 인물 프로필 딕셔너리
+        
+    Returns:
+        생성된 이미지 URL (또는 None)
+    """
+    try:
+        if not character_data:
+            print("❌ 인물 데이터가 없습니다.")
+            return None
+            
+        # 프롬프트 생성
+        gender_en = "male" if character_data.get('gender') == '남성' else "female"
+        age = character_data.get('age', 30)
+        occupation = character_data.get('occupation', '직장인')
+        
+        prompt = f"""A professional portrait photo of a {age}-year-old Korean {gender_en} {occupation}, 
+realistic style, soft lighting, neutral background, wearing traditional Korean hanbok clothing, 
+dignified and calm expression, high quality, detailed facial features"""
+        
+        print(f"🎨 이미지 생성 중... (프롬프트: {prompt[:50]}...)")
+        
+        response = client.images.generate(
+            model="dall-e-3",
+            prompt=prompt,
+            size="1024x1024",
+            quality="standard",
+            n=1
+        )
+        
+        if response and response.data and len(response.data) > 0:
+            image_url = response.data[0].url
+            print(f"✅ 이미지 생성 완료: {image_url[:50]}...")
+            return image_url
+        else:
+            print("❌ 이미지 생성 응답이 비어있습니다.")
+            return None
+        
+    except Exception as e:
+        print(f"❌ 이미지 생성 실패: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+def download_image(image_url: str) -> bytes:
+    """
+    URL에서 이미지를 다운로드합니다.
+    
+    Args:
+        image_url: 이미지 URL
+        
+    Returns:
+        이미지 바이트 데이터
+    """
+    try:
+        if not image_url:
+            print("❌ 이미지 URL이 없습니다.")
+            return None
+            
+        print(f"🔄 이미지 다운로드 중: {image_url[:50]}...")
+        response = requests.get(image_url, timeout=30)
+        response.raise_for_status()
+        print(f"✅ 이미지 다운로드 완료 ({len(response.content)} bytes)")
+        return response.content
+    except Exception as e:
+        print(f"❌ 이미지 다운로드 실패: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return None
 
 def analyze_fortune(character_data: dict, conversation_history: list):
