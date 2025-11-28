@@ -244,7 +244,9 @@ if st.session_state.view_mode == 'detail' and st.session_state.selected_session_
             col1, col2 = st.columns([1, 3])
             
             with col1:
-                image_url = character.get('image_url', 'https://via.placeholder.com/150')
+                image_url = character.get('image_url')
+                if not image_url or image_url == 'None' or image_url.strip() == '':
+                    image_url = 'https://via.placeholder.com/150'
                 st.image(image_url, caption="인물 이미지")
             
             with col2:
@@ -385,8 +387,8 @@ elif st.session_state.character is not None and st.session_state.view_mode == 'n
         col1, col2 = st.columns([1, 3])
         
         with col1:
-            image_url = st.session_state.character.get('image_url', 'https://via.placeholder.com/150')
-            if not image_url:
+            image_url = st.session_state.character.get('image_url')
+            if not image_url or image_url == 'None' or str(image_url).strip() == '':
                 image_url = 'https://via.placeholder.com/150'
             st.image(image_url, caption="인물 이미지")
         
