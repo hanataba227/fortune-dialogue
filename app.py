@@ -6,6 +6,7 @@ AI 손님과 대화를 나누며 사주를 풀어가는 감성 대화형 웹 프
 import streamlit as st
 import os
 import sys
+import time
 from dotenv import load_dotenv
 from datetime import datetime
 
@@ -56,6 +57,7 @@ st.markdown("""
         margin-bottom: 1rem;
         display: flex;
         flex-direction: column;
+        animation: fadeIn 0.5s ease-in;
     }
     .user-message {
         background-color: #E8F4F8;
@@ -64,6 +66,39 @@ st.markdown("""
     .ai-message {
         background-color: #F5F5DC;
         margin-right: 20%;
+        animation: fadeIn 0.5s ease-in, typing 0.8s steps(40) 1;
+    }
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes typing {
+        from { width: 0; }
+        to { width: 100%; }
+    }
+    .typing-indicator {
+        display: inline-block;
+        width: 60px;
+        text-align: center;
+    }
+    .typing-indicator span {
+        display: inline-block;
+        background-color: #8B4513;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin: 0 2px;
+        animation: bounce 1.4s infinite ease-in-out both;
+    }
+    .typing-indicator span:nth-child(1) {
+        animation-delay: -0.32s;
+    }
+    .typing-indicator span:nth-child(2) {
+        animation-delay: -0.16s;
+    }
+    @keyframes bounce {
+        0%, 80%, 100% { transform: scale(0); }
+        40% { transform: scale(1); }
     }
     .character-card {
         background-color: #FFF8DC;
@@ -77,6 +112,28 @@ st.markdown("""
         border-radius: 0.5rem;
         height: 3rem;
         font-size: 1.1em;
+    }
+    
+    /* 반응형 디자인 */
+    @media (max-width: 768px) {
+        .main-header {
+            font-size: 2em;
+        }
+        .sub-header {
+            font-size: 1em;
+        }
+        .user-message {
+            margin-left: 5%;
+        }
+        .ai-message {
+            margin-right: 5%;
+        }
+        .chat-message {
+            padding: 1rem;
+        }
+        .character-card {
+            padding: 1rem;
+        }
     }
     
     /* 사주 결과 전용 스타일 */
@@ -424,9 +481,15 @@ elif st.session_state.character is not None and st.session_state.view_mode == 'n
         save_message(st.session_state.session_id, st.session_state.character_id, "user", user_input)
         
         # Generate AI response using OpenAI
-        with st.spinner(f"{st.session_state.character['name']}님이 생각하고 있습니다..."):
-            # Prepare character context
-            character_context = f"""
+        # Show typing indicator
+        typing_placeholder = st.empty()
+        typing_placeholder.markdown(
+            f'<div class="chat-message ai-message"><strong>{st.session_state.character["name"]}</strong><br/><div class="typing-indicator"><span></span><span></span><span></span></div></div>',
+            unsafe_allow_html=True
+        )
+        
+        # Prepare character context
+        character_context = f"""
 이름: {st.session_state.character['name']}
 나이: {st.session_state.character['age']}세
 성별: {st.session_state.character['gender']}
@@ -438,21 +501,24 @@ elif st.session_state.character is not None and st.session_state.view_mode == 'n
 당신은 사주를 보러 온 손님입니다. 자연스럽고 진솔하게 대화하세요.
 너무 많이 말하지 말고, 간결하게 답변하세요.
 """
-            
-            # Prepare conversation history for API
-            conversation_history = []
-            for msg in st.session_state.messages[:-1]:  # Exclude the current user message
-                role = "assistant" if msg["role"] == "assistant" else "user"
-                conversation_history.append({"role": role, "content": msg["content"]})
-            
-            # Get AI response
-            ai_response = chat_with_character(character_context, user_input, conversation_history)
-            
-            if ai_response:
-                st.session_state.messages.append({"role": "assistant", "content": ai_response})
-                save_message(st.session_state.session_id, st.session_state.character_id, "ai", ai_response)
-            else:
-                st.error("응답 생성에 실패했습니다. 다시 시도해주세요.")
+        
+        # Prepare conversation history for API
+        conversation_history = []
+        for msg in st.session_state.messages[:-1]:  # Exclude the current user message
+            role = "assistant" if msg["role"] == "assistant" else "user"
+            conversation_history.append({"role": role, "content": msg["content"]})
+        
+        # Get AI response
+        ai_response = chat_with_character(character_context, user_input, conversation_history)
+        
+        # Clear typing indicator
+        typing_placeholder.empty()
+        
+        if ai_response:
+            st.session_state.messages.append({"role": "assistant", "content": ai_response})
+            save_message(st.session_state.session_id, st.session_state.character_id, "ai", ai_response)
+        else:
+            st.error("응답 생성에 실패했습니다. 다시 시도해주세요.")
         
         st.rerun()
     
